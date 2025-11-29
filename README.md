@@ -18,4 +18,17 @@ Useful when you want to reduce database calls, API calls, or any I/O by batching
 ## Install
 
 ```bash
-go get github.com/barbodimani81/go-batcher
+  go get github.com/barbodimani81/go-batcher
+```
+
+---
+
+## Demo
+
+```bash
+  go run ./cmd/demo \
+  -count=1000 \
+  -batch-size=10 \
+  -timeout=2s \
+  -workers=4
+```
