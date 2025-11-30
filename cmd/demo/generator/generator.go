@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// Item is a simple demo payload.
 type Item struct {
 	ID     int  `json:"id"`
 	Age    int  `json:"age"`
@@ -14,13 +15,12 @@ type Item struct {
 }
 
 func init() {
-	// Seed for non-deterministic output in demos.
 	rand.Seed(time.Now().UnixNano())
 }
 
-// ItemGenerator generates n JSON-encoded Items and sends them on a channel.
+// Generate creates n random Items, encodes them as JSON, and sends them on a channel.
 // The channel is closed when generation is complete.
-func ItemGenerator(n int) <-chan []byte {
+func Generate(n int) <-chan []byte {
 	ch := make(chan []byte)
 
 	go func() {
