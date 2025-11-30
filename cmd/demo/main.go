@@ -16,10 +16,10 @@ func main() {
 	start := time.Now()
 
 	// Flags.
-	count := flag.Int("count", 1000, "number of items to generate")
-	batchSize := flag.Int("batch-size", 10, "number of items per batch")
+	objectsCount := flag.Int("count", 1000, "number of items to generate")
+	batchSizeLimit := flag.Int("batch-size", 10, "number of items per batch")
 	timeout := flag.Duration("timeout", 2*time.Second, "flush timeout")
-	workers := flag.Int("workers", 4, "number of worker goroutines")
+	goroutines := flag.Int("workers", 4, "number of worker goroutines")
 	flag.Parse()
 
 	var generated int64
@@ -27,7 +27,7 @@ func main() {
 
 	// 1. Create the batcher.
 	cfg := cargo.Config{
-		BatchSize: *batchSize,
+		BatchSize: *batchSizeLimit,
 		Timeout:   *timeout,
 		Handler: func(ctx context.Context, batch []any) error {
 			atomic.AddInt64(&flushed, int64(len(batch)))
@@ -42,13 +42,13 @@ func main() {
 	}
 
 	// 2. Start generator.
-	ch := generator.Generate(*count)
+	ch := generator.Generate(*objectsCount)
 
 	// 3. Start workers.
 	ctx := context.Background()
 	var wg sync.WaitGroup
 
-	for i := 0; i < *workers; i++ {
+	for i := 0; i < *goroutines; i++ {
 		wg.Add(1)
 
 		go func() {
