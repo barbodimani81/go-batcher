@@ -75,9 +75,9 @@ Processing batch of 5 items: [21 22 23 24 25]
 
 ```go
 type LogEntry struct {
-	Timestamp time.Time
-	Message   string
-	Level     string
+Timestamp time.Time
+Message   string
+Level     string
 }
 ```
 
@@ -87,17 +87,17 @@ The handler receives a batch of items and processes them:
 
 ```go
 func processLogs(ctx context.Context, batch []LogEntry) error {
-	// Your batch processing logic here
-	// For example: write to database, send to API, etc.
-	fmt.Printf("Writing %d log entries to database\n", len(batch))
-	
-	// Simulate database write
-	for _, entry := range batch {
-		// db.Insert(entry)
-		fmt.Printf("  - [%s] %s\n", entry.Level, entry.Message)
-	}
-	
-	return nil
+// Your batch processing logic here
+// For example: write to database, send to API, etc.
+fmt.Printf("Writing %d log entries to database\n", len(batch))
+
+// Simulate database write
+for _, entry := range batch {
+// db.Insert(entry)
+fmt.Printf("  - [%s] %s\n", entry.Level, entry.Message)
+}
+
+return nil
 }
 ```
 
@@ -105,12 +105,12 @@ func processLogs(ctx context.Context, batch []LogEntry) error {
 
 ```go
 batcher, err := cargo.NewCargo(
-	100,              // flush when 100 items collected
-	5*time.Second,    // or flush every 5 seconds
-	processLogs,      // your handler function
+100,              // flush when 100 items collected
+5*time.Second,    // or flush every 5 seconds
+processLogs,      // your handler function
 )
 if err != nil {
-	log.Fatal(err)
+log.Fatal(err)
 }
 defer batcher.Close() // Always close to flush remaining items
 ```
@@ -120,13 +120,13 @@ defer batcher.Close() // Always close to flush remaining items
 ```go
 // Add items from anywhere in your code
 entry := LogEntry{
-	Timestamp: time.Now(),
-	Message:   "User logged in",
-	Level:     "INFO",
+Timestamp: time.Now(),
+Message:   "User logged in",
+Level:     "INFO",
 }
 
 if err := batcher.Add(entry); err != nil {
-	log.Printf("Failed to add entry: %v", err)
+log.Printf("Failed to add entry: %v", err)
 }
 ```
 
@@ -135,7 +135,7 @@ if err := batcher.Add(entry); err != nil {
 ```go
 // Force an immediate flush if needed
 if err := batcher.Flush(context.Background()); err != nil {
-	log.Printf("Flush failed: %v", err)
+log.Printf("Flush failed: %v", err)
 }
 ```
 
@@ -164,7 +164,7 @@ type User struct {
 
 func main() {
 	// Connect to MongoDB
-	client, err := mongo.Connect(context.Background(), 
+	client, err := mongo.Connect(context.Background(),
 		options.Client().ApplyURI("mongodb://localhost:27017"))
 	if err != nil {
 		log.Fatal(err)
@@ -183,14 +183,14 @@ func main() {
 			for i, user := range batch {
 				docs[i] = user
 			}
-			
+
 			// Bulk insert
 			_, err := collection.InsertMany(ctx, docs)
 			if err != nil {
 				log.Printf("Insert failed: %v", err)
 				return err
 			}
-			
+
 			log.Printf("Inserted %d users", len(batch))
 			return nil
 		},
@@ -207,12 +207,12 @@ func main() {
 			Name:  fmt.Sprintf("User %d", i),
 			Email: fmt.Sprintf("user%d@example.com", i),
 		}
-		
+
 		if err := batcher.Add(user); err != nil {
 			log.Printf("Failed to add user: %v", err)
 		}
 	}
-	
+
 	// Close() will flush remaining users
 	log.Println("All users processed")
 }
@@ -224,9 +224,9 @@ func main() {
 
 ```go
 func NewCargo[T any](
-	batchSize int,
-	timeout time.Duration,
-	handler func(ctx context.Context, batch []T) error,
+batchSize int,
+timeout time.Duration,
+handler func(ctx context.Context, batch []T) error,
 ) (*Cargo[T], error)
 ```
 
@@ -266,13 +266,13 @@ The batcher is safe for concurrent use:
 var wg sync.WaitGroup
 
 for i := 0; i < 10; i++ {
-	wg.Add(1)
-	go func(id int) {
-		defer wg.Done()
-		for j := 0; j < 100; j++ {
-			batcher.Add(fmt.Sprintf("worker-%d-item-%d", id, j))
-		}
-	}(i)
+wg.Add(1)
+go func(id int) {
+defer wg.Done()
+for j := 0; j < 100; j++ {
+batcher.Add(fmt.Sprintf("worker-%d-item-%d", id, j))
+}
+}(i)
 }
 
 wg.Wait()
@@ -294,14 +294,14 @@ If your handler returns an error, the batch is lost. Implement retry logic in yo
 
 ```go
 handler := func(ctx context.Context, batch []Item) error {
-	maxRetries := 3
-	for i := 0; i < maxRetries; i++ {
-		if err := db.InsertMany(batch); err == nil {
-			return nil
-		}
-		time.Sleep(time.Second * time.Duration(i+1))
-	}
-	return fmt.Errorf("failed after %d retries", maxRetries)
+maxRetries := 3
+for i := 0; i < maxRetries; i++ {
+if err := db.InsertMany(batch); err == nil {
+return nil
+}
+time.Sleep(time.Second * time.Duration(i+1))
+}
+return fmt.Errorf("failed after %d retries", maxRetries)
 }
 ```
 
