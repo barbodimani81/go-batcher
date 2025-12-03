@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    depends_on:
+      mongodb:
+        condition: service_started
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+
+  mongodb:
+    image: mongo:7.0
+    command: ["--quiet", "--logpath", "/dev/null"]
+    ports:
+      - "27018:27017"
+    volumes:
+      - data:/data/db
+
+volumes:
+  data: {}

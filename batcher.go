@@ -2,154 +2,127 @@ package cargo
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
 
-// HandlerFunc is called whenever a batch is flushed.
-// The batch slice must be treated as read-only and must not be retained.
-type HandlerFunc func(ctx context.Context, batch []any) error
+type handlerFunc[T any] func(ctx context.Context, batch []T) error
 
-// Config holds the configuration for Cargo.
-type Config struct {
-	// BatchSize is the number of items after which a flush is triggered.
-	// If BatchSize <= 0, size-based flushing is disabled.
-	BatchSize int
+type Cargo[T any] struct {
+	mu        sync.Mutex
+	batch     []T
+	batchSize int
 
-	// Timeout is the maximum amount of time to wait before flushing
-	// the current batch. If Timeout <= 0, time-based flushing is disabled.
-	Timeout time.Duration
+	timeout time.Duration
+	handler handlerFunc[T]
 
-	// Handler is called on every flush with the current batch.
-	// Handler must be safe for concurrent use.
-	Handler HandlerFunc
+	done      chan struct{}
+	flushCh   chan struct{}
+	stopped   chan struct{}
+	flushing  sync.Mutex
+	closeOnce sync.Once
 }
 
-// Cargo is an in-memory batcher. It is safe for concurrent use.
-type Cargo struct {
-	mu     sync.Mutex
-	cfg    Config
-	buffer []any
-	timer  *time.Timer
-	closed bool
+func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
+	if err := configValidation(size, timeout, fn); err != nil {
+		return nil, err
+	}
+
+	c := &Cargo[T]{
+		batch:     make([]T, 0, size),
+		batchSize: size,
+		timeout:   timeout,
+		handler:   fn,
+		done:      make(chan struct{}),
+		flushCh:   make(chan struct{}, 1),
+		stopped:   make(chan struct{}),
+	}
+
+	go c.run()
+	return c, nil
 }
 
-// Errors returned by Cargo.
-var (
-	ErrNilHandler   = errors.New("cargo: handler must not be nil")
-	ErrClosed       = errors.New("cargo: batcher is closed")
-	ErrInvalidBatch = errors.New("cargo: batch size must be > 0 when enabled")
-)
-
-// New creates a new Cargo batcher with the given configuration.
-func New(cfg Config) (*Cargo, error) {
-	if cfg.Handler == nil {
-		return nil, ErrNilHandler
+func (c *Cargo[T]) run() {
+	ticker := time.NewTicker(c.timeout)
+	defer ticker.Stop()
+	defer close(c.stopped)
+	for {
+		select {
+		case <-ticker.C:
+			_ = c.flush(context.Background())
+			ticker.Reset(c.timeout)
+		case <-c.flushCh:
+			_ = c.flush(context.Background())
+			ticker.Reset(c.timeout)
+		case <-c.done:
+			_ = c.flush(context.Background())
+			return
+		}
 	}
-	if cfg.BatchSize == 0 && cfg.Timeout <= 0 {
-		return nil, errors.New("cargo: either BatchSize or Timeout must be set")
-	}
-	if cfg.BatchSize < 0 {
-		return nil, ErrInvalidBatch
-	}
-
-	return &Cargo{
-		cfg: cfg,
-	}, nil
 }
 
-// Add adds a single item to the batch.
-//
-// It may trigger a flush if the batch size threshold is reached.
-// The provided context is used for the handler if this call triggers
-// a size-based flush. Time-based flushes use context.Background.
-func (c *Cargo) Add(ctx context.Context, item any) error {
+// Add adds one item
+func (c *Cargo[T]) Add(item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.closed {
-		return ErrClosed
+	select {
+	case <-c.done:
+		return fmt.Errorf("cargo closed")
+	default:
 	}
 
-	// Ensure timer exists if timeout is enabled and no timer is running.
-	if c.cfg.Timeout > 0 && c.timer == nil {
-		c.startTimerLocked()
+	c.batch = append(c.batch, item)
+	if len(c.batch) >= c.batchSize {
+		select {
+		case c.flushCh <- struct{}{}:
+		default:
+		}
 	}
-
-	c.buffer = append(c.buffer, item)
-
-	if c.cfg.BatchSize > 0 && len(c.buffer) >= c.cfg.BatchSize {
-		return c.flushLocked(ctx)
-	}
-
 	return nil
 }
 
-// Flush flushes the current batch immediately.
-// If the batch is empty, Flush is a no-op.
-func (c *Cargo) Flush(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// flush is the internal flush with proper synchronization
+func (c *Cargo[T]) flush(ctx context.Context) error {
+	c.flushing.Lock()
+	defer c.flushing.Unlock()
 
-	return c.flushLocked(ctx)
-}
-
-// Close marks the batcher as closed and flushes any remaining items.
-// After Close, Add will return ErrClosed.
-func (c *Cargo) Close(ctx context.Context) error {
 	c.mu.Lock()
-	if c.closed {
+	if len(c.batch) == 0 {
 		c.mu.Unlock()
 		return nil
 	}
-	c.closed = true
 
-	// Stop any running timer.
-	c.stopTimerLocked()
-
-	err := c.flushLocked(ctx)
+	b := c.batch
+	c.batch = make([]T, 0, c.batchSize)
 	c.mu.Unlock()
 
-	return err
+	return c.handler(ctx, b)
 }
 
-// flushLocked must be called with c.mu held.
-func (c *Cargo) flushLocked(ctx context.Context) error {
-	if len(c.buffer) == 0 {
-		return nil
-	}
-
-	// Stop timer once we flush (we'll recreate it on next Add if needed).
-	c.stopTimerLocked()
-
-	// Copy the batch so the handler can't mutate our internal slice.
-	batch := make([]any, len(c.buffer))
-	copy(batch, c.buffer)
-
-	// Reset buffer.
-	c.buffer = c.buffer[:0]
-
-	// Call handler outside of the locked section? Here we keep it simple
-	// and call while holding the lock to avoid reentrancy issues.
-	// For heavy handlers, you might want to release the lock before calling.
-	return c.cfg.Handler(ctx, batch)
+// Flush flushes the current batch (public API)
+func (c *Cargo[T]) Flush(ctx context.Context) error {
+	return c.flush(ctx)
 }
 
-func (c *Cargo) stopTimerLocked() {
-	if c.timer != nil {
-		if c.timer.Stop() {
-			// timer successfully stopped
-		}
-		c.timer = nil
-	}
-}
-
-func (c *Cargo) startTimerLocked() {
-	timeout := c.cfg.Timeout
-
-	c.timer = time.AfterFunc(timeout, func() {
-		// Time-based flush cannot use the caller's context, so we use Background.
-		_ = c.Flush(context.Background())
+func (c *Cargo[T]) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.done)
 	})
+	<-c.stopped
+	return nil
+}
+
+func configValidation[T any](size int, timeout time.Duration, fn handlerFunc[T]) error {
+	if size <= 0 {
+		return fmt.Errorf("batch size must be greater than zero")
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("timeout must be greater than zero")
+	}
+	if fn == nil {
+		return fmt.Errorf("handler func cannot be empty")
+	}
+	return nil
 }
