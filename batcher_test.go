@@ -72,47 +72,6 @@ func TestAddAndClose(t *testing.T) {
 
 // --- batch-size flush logic ---
 
-func TestFlushOnBatchSize(t *testing.T) {
-	batchCh := make(chan []int, 1)
-
-	handler := func(ctx context.Context, batch []int) error {
-		// copy slice so internal reuse doesn't affect the test
-		cp := append([]int(nil), batch...)
-		batchCh <- cp
-		return nil
-	}
-
-	c, err := NewCargo[int](3, 5*time.Second, handler)
-	if err != nil {
-		t.Fatalf("NewCargo error: %v", err)
-	}
-	defer c.Close()
-
-	if err := c.Add(1); err != nil {
-		t.Fatalf("Add(1) error: %v", err)
-	}
-	if err := c.Add(2); err != nil {
-		t.Fatalf("Add(2) error: %v", err)
-	}
-	if err := c.Add(3); err != nil {
-		t.Fatalf("Add(3) error: %v", err)
-	}
-
-	select {
-	case batch := <-batchCh:
-		if len(batch) != 3 {
-			t.Fatalf("expected batch size 3, got %d", len(batch))
-		}
-		if batch[0] != 1 || batch[1] != 2 || batch[2] != 3 {
-			t.Fatalf("unexpected batch contents: %#v", batch)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatalf("timed out waiting for batch-size flush")
-	}
-}
-
-// --- timeout-based flush logic ---
-
 func TestFlushOnTimeout(t *testing.T) {
 	batchCh := make(chan []int, 1)
 
@@ -147,7 +106,7 @@ func TestFlushOnTimeout(t *testing.T) {
 	}
 }
 
-// --- basic handler execution (just to be explicit) ---
+// --- timeout-based flush logic ---
 
 func TestHandlerIsCalled(t *testing.T) {
 	var (
@@ -190,7 +149,7 @@ func TestHandlerIsCalled(t *testing.T) {
 	}
 }
 
-// --- concurrent Add usage ---
+// --- basic handler execution (just to be explicit) ---
 
 func TestConcurrentAdd(t *testing.T) {
 	const (
@@ -244,7 +203,7 @@ func TestConcurrentAdd(t *testing.T) {
 	}
 }
 
-// --- ticker-based repeated flush (indirectly checks reset/continued operation) ---
+// --- concurrent Add usage ---
 
 func TestRepeatedTimeoutFlushes(t *testing.T) {
 	type call struct {
@@ -308,7 +267,7 @@ func TestRepeatedTimeoutFlushes(t *testing.T) {
 	}
 }
 
-// --- manual flush ---
+// --- ticker-based repeated flush (indirectly checks reset/continued operation) ---
 
 func TestManualFlush(t *testing.T) {
 	var (
@@ -355,7 +314,7 @@ func TestManualFlush(t *testing.T) {
 	}
 }
 
-// --- empty batch flush ---
+// --- manual flush ---
 
 func TestEmptyBatchFlush(t *testing.T) {
 	called := false
@@ -383,7 +342,7 @@ func TestEmptyBatchFlush(t *testing.T) {
 	}
 }
 
-// --- handler error handling ---
+// --- empty batch flush ---
 
 func TestHandlerError(t *testing.T) {
 	expectedErr := fmt.Errorf("handler error")
@@ -421,7 +380,7 @@ func TestHandlerError(t *testing.T) {
 	}
 }
 
-// --- close idempotency ---
+// --- handler error handling ---
 
 func TestCloseIdempotency(t *testing.T) {
 	handler := func(ctx context.Context, batch []int) error { return nil }
@@ -445,7 +404,7 @@ func TestCloseIdempotency(t *testing.T) {
 	}
 }
 
-// --- type safety with generics ---
+// --- close idempotency ---
 
 func TestGenericTypes(t *testing.T) {
 	t.Run("string type", func(t *testing.T) {
@@ -532,7 +491,7 @@ func TestGenericTypes(t *testing.T) {
 	})
 }
 
-// --- race condition test ---
+// --- type safety with generics ---
 
 func TestNoRaceCondition(t *testing.T) {
 	var (
@@ -585,7 +544,7 @@ func TestNoRaceCondition(t *testing.T) {
 	}
 }
 
-// --- batch size boundary ---
+// --- race condition test ---
 
 func TestBatchSizeBoundary(t *testing.T) {
 	var (
@@ -641,5 +600,46 @@ func TestBatchSizeBoundary(t *testing.T) {
 
 	if batches[1] != 1 {
 		t.Fatalf("expected second batch size 1, got %d", batches[1])
+	}
+}
+
+// --- batch size boundary ---
+
+func TestFlushOnBatchSize(t *testing.T) {
+	batchCh := make(chan []int, 1)
+
+	handler := func(ctx context.Context, batch []int) error {
+		// copy slice so internal reuse doesn't affect the test
+		cp := append([]int(nil), batch...)
+		batchCh <- cp
+		return nil
+	}
+
+	c, err := NewCargo[int](3, 5*time.Second, handler)
+	if err != nil {
+		t.Fatalf("NewCargo error: %v", err)
+	}
+	defer c.Close()
+
+	if err := c.Add(1); err != nil {
+		t.Fatalf("Add(1) error: %v", err)
+	}
+	if err := c.Add(2); err != nil {
+		t.Fatalf("Add(2) error: %v", err)
+	}
+	if err := c.Add(3); err != nil {
+		t.Fatalf("Add(3) error: %v", err)
+	}
+
+	select {
+	case batch := <-batchCh:
+		if len(batch) != 3 {
+			t.Fatalf("expected batch size 3, got %d", len(batch))
+		}
+		if batch[0] != 1 || batch[1] != 2 || batch[2] != 3 {
+			t.Fatalf("unexpected batch contents: %#v", batch)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("timed out waiting for batch-size flush")
 	}
 }
