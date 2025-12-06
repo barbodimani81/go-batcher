@@ -38,8 +38,6 @@ func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Contex
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
 	}
-
-	//go c.run()
 	return c, nil
 }
 
@@ -53,7 +51,6 @@ func (c *Cargo[T]) Run() {
 		defer ticker.Stop()
 		for {
 			select {
-			// TODO: context -> done in flush()
 			case <-ticker.C:
 				_ = c.flush(context.Background())
 			case <-c.flushCh:

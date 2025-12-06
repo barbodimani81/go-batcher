@@ -83,6 +83,7 @@ func main() {
 	}()
 
 	// worker pool for add to cargo and flush
+	c.Run()
 	var wg sync.WaitGroup
 	wg.Add(*workers)
 
