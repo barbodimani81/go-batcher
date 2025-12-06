@@ -3,6 +3,7 @@ package cargo
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -15,12 +16,15 @@ type Cargo[T any] struct {
 	batchSize int
 
 	// ticker timeout
-	timeout time.Duration
+	timeout  time.Duration
+	interval time.Duration
 	// context timeout
 	handler handlerFunc[T]
+	ticker  *time.Ticker
 
 	done      chan struct{}
 	flushCh   chan struct{}
+	tickerCh  <-chan time.Time
 	closeOnce sync.Once
 	running   bool
 }
@@ -37,6 +41,8 @@ func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Contex
 		handler:   fn,
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
+		tickerCh:  nil,
+		running:   false,
 	}
 	return c, nil
 }
@@ -45,35 +51,42 @@ func (c *Cargo[T]) Run() {
 	c.mu.Lock()
 	c.running = true
 	c.mu.Unlock()
-	// TODO: start ticker when len == 1 -> ok
-	if len(c.batch) == 1 {
-		ticker := time.NewTicker(c.timeout)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				_ = c.flush(context.Background())
-			case <-c.flushCh:
-				_ = c.flush(context.Background())
-				ticker.Reset(c.timeout)
-			case <-c.done:
-				_ = c.flush(context.Background())
-				return
+
+	for {
+		select {
+		case <-c.tickerCh:
+			err := c.flush(context.Background())
+			if err != nil {
+				log.Printf("cannot size based flush: %v", err)
 			}
+		case <-c.flushCh:
+			err := c.flush(context.Background())
+			if err != nil {
+				log.Printf("cannot timeout flush: %v", err)
+			}
+			c.ticker.Reset(c.timeout)
+		case <-c.done:
+			err := c.flush(context.Background())
+			if err != nil {
+				log.Printf("cannot final flush: %v", err)
+			}
+			c.ticker.Stop()
+			return
 		}
 	}
-	c.mu.Lock()
-	c.running = false
-	c.mu.Unlock()
 }
 
 // Add adds one item
-// TODO: run() in main + check run() in Add() ? -> flag
 func (c *Cargo[T]) Add(item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.running {
+	if len(c.batch) == 1 {
+		c.ticker = time.NewTicker(c.timeout)
+		c.tickerCh = c.ticker.C
+	}
+
+	if err := c.running; err {
 		select {
 		case <-c.done:
 			return fmt.Errorf("cargo closed")
@@ -86,8 +99,11 @@ func (c *Cargo[T]) Add(item T) error {
 			case c.flushCh <- struct{}{}:
 			default:
 			}
+
 		}
+		return fmt.Errorf("run() is not runnng: %v", err)
 	}
+	//TODO RETURN PROPER ERROR -> ok?
 	return nil
 }
 
@@ -95,7 +111,7 @@ func (c *Cargo[T]) Add(item T) error {
 func (c *Cargo[T]) flush(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	flushCtx, cancel := context.WithTimeout(ctx, c.interval)
 	defer cancel()
 
 	c.mu.Lock()
