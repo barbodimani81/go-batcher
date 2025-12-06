@@ -26,7 +26,6 @@ type Cargo[T any] struct {
 	flushCh   chan struct{}
 	tickerCh  <-chan time.Time
 	closeOnce sync.Once
-	running   bool
 }
 
 func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
@@ -42,16 +41,12 @@ func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Contex
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
-		running:   false,
 	}
+	go c.run()
 	return c, nil
 }
 
-func (c *Cargo[T]) Run() {
-	c.mu.Lock()
-	c.running = true
-	c.mu.Unlock()
-
+func (c *Cargo[T]) run() {
 	for {
 		select {
 		case <-c.tickerCh:
@@ -81,29 +76,26 @@ func (c *Cargo[T]) Add(item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.batch) == 1 {
+	if len(c.batch) == 0 {
 		c.ticker = time.NewTicker(c.timeout)
 		c.tickerCh = c.ticker.C
 	}
 
-	if err := c.running; err {
+	select {
+	case <-c.done:
+		return fmt.Errorf("cargo closed")
+	default:
+	}
+
+	c.batch = append(c.batch, item)
+	if len(c.batch) >= c.batchSize {
 		select {
-		case <-c.done:
-			return fmt.Errorf("cargo closed")
+		case c.flushCh <- struct{}{}:
 		default:
 		}
 
-		c.batch = append(c.batch, item)
-		if len(c.batch) >= c.batchSize {
-			select {
-			case c.flushCh <- struct{}{}:
-			default:
-			}
-
-		}
-		return fmt.Errorf("run() is not runnng: %v", err)
 	}
-	//TODO RETURN PROPER ERROR -> ok?
+
 	return nil
 }
 
@@ -114,7 +106,6 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 	flushCtx, cancel := context.WithTimeout(ctx, c.interval)
 	defer cancel()
 
-	c.mu.Lock()
 	if len(c.batch) == 0 {
 		c.mu.Unlock()
 		return nil
