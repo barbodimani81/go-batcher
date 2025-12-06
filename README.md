@@ -119,7 +119,7 @@ defer batcher.Close() // Always close to flush remaining items
 
 ```go
 // Run the program
-Run()
+batcher.Run()
 // Add items from anywhere in your code
 entry := LogEntry{
 Timestamp: time.Now(),
@@ -202,6 +202,7 @@ func main() {
 	}
 	defer batcher.Close()
 
+	batcher.Run()
 	// Add users (could be from API, CSV, etc.)
 	for i := 1; i <= 5000; i++ {
 		user := User{
