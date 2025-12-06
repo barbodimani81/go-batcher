@@ -101,7 +101,7 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 	return c.handler(ctx, b)
 }
 
-// Flush flushes the current batch (public API)
+// Flush flushes the current batch (public API)s
 func (c *Cargo[T]) Flush(ctx context.Context) error {
 	return c.flush(ctx)
 }
