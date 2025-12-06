@@ -115,9 +115,11 @@ log.Fatal(err)
 defer batcher.Close() // Always close to flush remaining items
 ```
 
-### Step 4: Add Items
+### Step 4: Run and Add Items
 
 ```go
+// Run the program
+Run()
 // Add items from anywhere in your code
 entry := LogEntry{
 Timestamp: time.Now(),
