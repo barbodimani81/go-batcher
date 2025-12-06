@@ -43,6 +43,7 @@ func main() {
 	log.Printf("generating %d objects\n", *objectsCount)
 	ch := generator.ItemGenerator(*objectsCount)
 
+	// TODO: generic
 	// cargo handler connection to mongo
 	handler := func(ctx context.Context, batch []any) error {
 		if len(batch) == 0 {
