@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
+
 	cargo "github.com/barbodimani81/go-batcher"
 	"github.com/barbodimani81/go-batcher/cmd/demo/generator"
-	"log"
-	"time"
 )
 
 func main() {
@@ -26,6 +29,12 @@ func main() {
 		panic(err)
 	}
 
+	//time.Sleep(5 * time.Second)
+
+	c.Close()
+
+	fmt.Println("ended")
+	os.Exit(0)
 	log.Println("item add")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

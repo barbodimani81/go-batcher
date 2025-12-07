@@ -26,6 +26,7 @@ type Cargo[T any] struct {
 	flushCh   chan struct{}
 	tickerCh  <-chan time.Time
 	closeOnce sync.Once
+	runWg     sync.WaitGroup
 }
 
 func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
@@ -43,7 +44,7 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 		interval:  interval,
 		timeout:   timeout,
 		handler:   fn,
-		done:      make(chan struct{}, 1),
+		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
 		Ticker:    time.NewTicker(interval),
@@ -58,6 +59,7 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 	// FIX: Either make Run() unexported (run) so user can't call it, OR
 	//      remove this line and let user call Start() explicitly
 	// *** run unexported
+	c.runWg.Add(1)
 	go c.run()
 	return c, nil
 }
@@ -97,17 +99,16 @@ func (c *Cargo[T]) run() {
 			// Done
 			c.Ticker.Stop()
 		case <-c.done:
-			log.Println("done 222")
 			// TODO: Final flush also uses Background context - can't respect shutdown deadline
+			fmt.Println("done")
 			err := c.flush(context.Background())
-			log.Println("before here")
 			if err != nil {
 				log.Printf("cannot final flush: %v", err)
 			}
-			log.Println("here")
 			if c.Ticker != nil {
 				c.Ticker.Stop()
 			}
+			c.runWg.Done()
 			return
 		}
 	}
@@ -175,12 +176,10 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 }
 
 func (c *Cargo[T]) Close() error {
-	log.Println("cargo closinghhhh")
 	c.closeOnce.Do(func() {
-		log.Println("cargo closed")
-		c.done <- struct{}{}
+		close(c.done)
+		c.runWg.Wait()
 	})
-	log.Println("cargo closed2")
 	return nil
 }
 
