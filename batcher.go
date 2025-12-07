@@ -19,9 +19,8 @@ type Cargo[T any] struct {
 	timeout  time.Duration
 	interval time.Duration
 	// context-timeout
-	handler  handlerFunc[T]
-	ticker   *time.Ticker
-	tickerCh <-chan time.Time
+	handler handlerFunc[T]
+	ticker  *time.Ticker
 
 	done      chan struct{}
 	flushCh   chan struct{}
@@ -46,7 +45,6 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 		handler:   fn,
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
-		tickerCh:  nil,
 		ticker:    time.NewTicker(interval),
 		// TODO: Initialize timeout here: timeout: flushTimeout,
 		// Done
