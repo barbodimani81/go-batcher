@@ -42,10 +42,19 @@ func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Conte
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
 	}
+	// TODO: API Design Issue - Starting goroutine in constructor causes problems:
+	// 1. User has no control over when background work starts
+	// 2. Creates race condition if user calls Run() again (see demo/main.go:98)
+	// 3. Makes testing harder
+	// FIX: Either make Run() unexported (run) so user can't call it, OR
+	//      remove this line and let user call Start() explicitly
 	go c.Run()
 	return c, nil
 }
 
+// TODO: This should be unexported (run) to prevent users from calling it multiple times
+// Currently if user calls Run() again, two goroutines compete for the same channels
+// causing race conditions and double-flush bugs
 func (c *Cargo[T]) Run() {
 	for {
 		select {
@@ -59,6 +68,10 @@ func (c *Cargo[T]) Run() {
 			if err != nil {
 				log.Printf("cannot interval flush: %v", err)
 			}
+			// TODO: Logic error - Should STOP ticker here, not Reset it.
+			// After size-based flush, batch is empty, so ticker should stop.
+			// It will be restarted on next Add() when batch goes from empty to 1 item.
+			// Currently this keeps ticker running unnecessarily and wastes resources.
 			c.Ticker.Reset(c.interval)
 		case <-c.done:
 			log.Println("done 222")
