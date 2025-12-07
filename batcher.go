@@ -28,6 +28,9 @@ type Cargo[T any] struct {
 	closeOnce sync.Once
 }
 
+// TODO: Add flushTimeout parameter to properly initialize c.timeout
+// Signature should be: NewCargo[T any](size int, interval time.Duration, flushTimeout time.Duration, fn ...) (*Cargo[T], error)
+// This gives flush operations their own independent timeout, separate from caller contexts
 func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
 	if err := configValidation(size, interval, fn); err != nil {
 		return nil, err
@@ -41,6 +44,7 @@ func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Conte
 		done:      make(chan struct{}, 1),
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
+		// TODO: Initialize timeout here: timeout: flushTimeout,
 	}
 	// TODO: API Design Issue - Starting goroutine in constructor causes problems:
 	// 1. User has no control over when background work starts
@@ -59,11 +63,14 @@ func (c *Cargo[T]) Run() {
 	for {
 		select {
 		case <-c.tickerCh:
+			// TODO: Using context.Background() loses cancellation/deadline from Add() caller
+			// Should store context from Add() and use it here for proper propagation
 			err := c.flush(context.Background())
 			if err != nil {
 				log.Printf("cannot size based flush: %v", err)
 			}
 		case <-c.flushCh:
+			// TODO: Same issue - context.Background() ignores caller's context
 			err := c.flush(context.Background())
 			if err != nil {
 				log.Printf("cannot interval flush: %v", err)
@@ -75,6 +82,7 @@ func (c *Cargo[T]) Run() {
 			c.Ticker.Reset(c.interval)
 		case <-c.done:
 			log.Println("done 222")
+			// TODO: Final flush also uses Background context - can't respect shutdown deadline
 			err := c.flush(context.Background())
 			log.Println("before here")
 			if err != nil {
@@ -90,6 +98,19 @@ func (c *Cargo[T]) Run() {
 }
 
 // Add adds one item
+// TODO: API Design - Should accept context.Context as first parameter
+// This would allow:
+// 1. Respecting caller's cancellation (don't accept work if request is cancelled)
+// 2. Propagating deadlines to the handler
+// 3. Passing trace IDs and request metadata for observability
+// Signature should be: Add(ctx context.Context, item T) error
+// Implementation (Option 4 - Check context at Add time only):
+//   select {
+//   case <-ctx.Done():
+//       return ctx.Err()
+//   default:
+//   }
+// This prevents accepting already-cancelled work without complicating flush logic
 func (c *Cargo[T]) Add(item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -124,6 +145,9 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 	c.mu.Lock()
 	// TODO: c.timeout is never initialized in NewCargo, so this creates an immediately cancelled context
 	// This breaks all handler operations that respect context cancellation
+	// FIX: After adding flushTimeout to NewCargo and initializing c.timeout,
+	//      change this to: flushCtx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	//      Using Background() makes flush independent of caller contexts (Option 4)
 	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
