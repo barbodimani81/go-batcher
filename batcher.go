@@ -28,6 +28,7 @@ type Cargo[T any] struct {
 	closeOnce sync.Once
 }
 
+func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
 // TODO: Add flushTimeout parameter to properly initialize c.timeout
 // Signature should be: NewCargo[T any](size int, interval time.Duration, flushTimeout time.Duration, fn ...) (*Cargo[T], error)
 // This gives flush operations their own independent timeout, separate from caller contexts
@@ -40,26 +41,31 @@ func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Conte
 		batch:     make([]T, 0, size),
 		batchSize: size,
 		interval:  interval,
+		timeout:   timeout,
 		handler:   fn,
 		done:      make(chan struct{}, 1),
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
+		Ticker:    time.NewTicker(interval),
 		// TODO: Initialize timeout here: timeout: flushTimeout,
 	}
+	c.Ticker.Stop()
 	// TODO: API Design Issue - Starting goroutine in constructor causes problems:
 	// 1. User has no control over when background work starts
 	// 2. Creates race condition if user calls Run() again (see demo/main.go:98)
 	// 3. Makes testing harder
 	// FIX: Either make Run() unexported (run) so user can't call it, OR
 	//      remove this line and let user call Start() explicitly
-	go c.Run()
+	// *** run unexported
+	go c.run()
 	return c, nil
 }
 
 // TODO: This should be unexported (run) to prevent users from calling it multiple times
 // Currently if user calls Run() again, two goroutines compete for the same channels
 // causing race conditions and double-flush bugs
-func (c *Cargo[T]) Run() {
+// *** run unexported
+func (c *Cargo[T]) run() {
 	for {
 		select {
 		case <-c.tickerCh:
@@ -69,6 +75,7 @@ func (c *Cargo[T]) Run() {
 			if err != nil {
 				log.Printf("cannot size based flush: %v", err)
 			}
+			c.Ticker.Stop()
 		case <-c.flushCh:
 			// TODO: Same issue - context.Background() ignores caller's context
 			err := c.flush(context.Background())
@@ -79,7 +86,8 @@ func (c *Cargo[T]) Run() {
 			// After size-based flush, batch is empty, so ticker should stop.
 			// It will be restarted on next Add() when batch goes from empty to 1 item.
 			// Currently this keeps ticker running unnecessarily and wastes resources.
-			c.Ticker.Reset(c.interval)
+			// *** ticker stop in all cases
+			c.Ticker.Stop()
 		case <-c.done:
 			log.Println("done 222")
 			// TODO: Final flush also uses Background context - can't respect shutdown deadline
@@ -119,21 +127,16 @@ func (c *Cargo[T]) Add(item T) error {
 	// This causes goroutine and memory leaks. Need to either:
 	// 1. Stop old ticker before creating new one, OR
 	// 2. Create ticker once in NewCargo and reset it instead of recreating
+	// *** timer Reset in Add done
 	if len(c.batch) == 0 {
-		c.Ticker = time.NewTicker(c.interval)
-		c.tickerCh = c.Ticker.C
+		c.Ticker.Reset(c.interval)
 	}
-
-	//select {
-	//case <-c.done:
-	//	return fmt.Errorf("cargo closed")
-	//default:
-	//}
 
 	c.batch = append(c.batch, item)
 	if len(c.batch) >= c.batchSize {
 		select {
 		case c.flushCh <- struct{}{}:
+			c.Ticker.Reset(c.interval)
 		default:
 		}
 	}
@@ -148,6 +151,7 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 	// FIX: After adding flushTimeout to NewCargo and initializing c.timeout,
 	//      change this to: flushCtx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	//      Using Background() makes flush independent of caller contexts (Option 4)
+	// *** timeout added to newCargo
 	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 

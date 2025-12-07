@@ -21,7 +21,7 @@ func main() {
 	}
 
 	log.Println("new cargo")
-	c, err := cargo.NewCargo(100, 2, handler)
+	c, err := cargo.NewCargo(100, 2, 5, handler)
 	if err != nil {
 		panic(err)
 	}
