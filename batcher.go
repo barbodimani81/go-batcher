@@ -80,7 +80,9 @@ func (c *Cargo[T]) run() {
 					log.Printf("cannot size based flush: %v", err)
 				}
 			}()
+			c.mu.Lock()
 			c.ticker.Stop()
+			c.mu.Unlock()
 		case <-c.flushCh:
 			// TODO: Same issue - context.Background() ignores caller's context
 			go func() {
@@ -95,7 +97,9 @@ func (c *Cargo[T]) run() {
 			// Currently this keeps ticker running unnecessarily and wastes resources.
 			// *** ticker stop in all cases
 			// Done
+			c.mu.Lock()
 			c.ticker.Stop()
+			c.mu.Unlock()
 		case <-c.done:
 			// TODO: Final flush also uses Background context - can't respect shutdown deadline
 			fmt.Println("done")
@@ -103,9 +107,11 @@ func (c *Cargo[T]) run() {
 			if err != nil {
 				log.Printf("cannot final flush: %v", err)
 			}
+			c.mu.Lock()
 			if c.ticker != nil {
 				c.ticker.Stop()
 			}
+			c.mu.Unlock()
 			c.runWg.Done()
 			return
 		}
