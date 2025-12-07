@@ -81,6 +81,10 @@ func (c *Cargo[T]) Add(item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// TODO: CRITICAL - Ticker leak! Every flush cycle creates a new ticker without stopping the old one.
+	// This causes goroutine and memory leaks. Need to either:
+	// 1. Stop old ticker before creating new one, OR
+	// 2. Create ticker once in NewCargo and reset it instead of recreating
 	if len(c.batch) == 0 {
 		c.Ticker = time.NewTicker(c.interval)
 		c.tickerCh = c.Ticker.C
@@ -105,6 +109,8 @@ func (c *Cargo[T]) Add(item T) error {
 // flush is the internal flush with proper synchronization
 func (c *Cargo[T]) flush(ctx context.Context) error {
 	c.mu.Lock()
+	// TODO: c.timeout is never initialized in NewCargo, so this creates an immediately cancelled context
+	// This breaks all handler operations that respect context cancellation
 	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
