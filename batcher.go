@@ -126,6 +126,7 @@ func (c *Cargo[T]) run() {
 // This prevents accepting already-cancelled work without complicating flush logic
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// TODO: CRITICAL - Ticker leak! Every flush cycle creates a new ticker without stopping the old one.
 	// This causes goroutine and memory leaks. Need to either:
@@ -138,11 +139,10 @@ func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	}
 
 	c.batch = append(c.batch, item)
-	c.mu.Unlock()
+
 	if len(c.batch) >= c.batchSize {
 		select {
 		case c.flushCh <- struct{}{}:
-			c.Ticker.Reset(c.interval)
 		default:
 		}
 	}
