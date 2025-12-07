@@ -66,23 +66,29 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 // Currently if user calls Run() again, two goroutines compete for the same channels
 // causing race conditions and double-flush bugs
 // Done
+
+// TODO: IMPORTANT -> SHOULD THE FLUSH HERE BE IN A GOROUTINE
 func (c *Cargo[T]) run() {
 	for {
 		select {
 		case <-c.tickerCh:
 			// TODO: Using context.Background() loses cancellation/deadline from Add() caller
 			// Should store context from Add() and use it here for proper propagation
-			err := c.flush(context.Background())
-			if err != nil {
-				log.Printf("cannot size based flush: %v", err)
-			}
+			go func() {
+				err := c.flush(context.Background())
+				if err != nil {
+					log.Printf("cannot size based flush: %v", err)
+				}
+			}()
 			c.Ticker.Stop()
 		case <-c.flushCh:
 			// TODO: Same issue - context.Background() ignores caller's context
-			err := c.flush(context.Background())
-			if err != nil {
-				log.Printf("cannot interval flush: %v", err)
-			}
+			go func() {
+				err := c.flush(context.Background())
+				if err != nil {
+					log.Printf("cannot interval flush: %v", err)
+				}
+			}()
 			// TODO: Logic error - Should STOP ticker here, not Reset it.
 			// After size-based flush, batch is empty, so ticker should stop.
 			// It will be restarted on next Add() when batch goes from empty to 1 item.
@@ -119,7 +125,6 @@ func (c *Cargo[T]) run() {
 // This prevents accepting already-cancelled work without complicating flush logic
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	// TODO: CRITICAL - Ticker leak! Every flush cycle creates a new ticker without stopping the old one.
 	// This causes goroutine and memory leaks. Need to either:
@@ -132,6 +137,7 @@ func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	}
 
 	c.batch = append(c.batch, item)
+	c.mu.Unlock()
 	if len(c.batch) >= c.batchSize {
 		select {
 		case c.flushCh <- struct{}{}:

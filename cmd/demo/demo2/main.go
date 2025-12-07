@@ -27,7 +27,9 @@ func main() {
 	}
 
 	log.Println("item add")
-	if err := c.Add(item); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.Add(ctx, item); err != nil {
 		print(err)
 	}
 	c.Ticker.Stop()
