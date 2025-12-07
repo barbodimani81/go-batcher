@@ -24,7 +24,6 @@ type Cargo[T any] struct {
 
 	done      chan struct{}
 	flushCh   chan struct{}
-	tickerCh  <-chan time.Time
 	closeOnce sync.Once
 	runWg     sync.WaitGroup
 }
@@ -46,7 +45,6 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 		handler:   fn,
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
-		tickerCh:  nil,
 		Ticker:    time.NewTicker(interval),
 		// TODO: Initialize timeout here: timeout: flushTimeout,
 		// Done
@@ -73,7 +71,7 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 func (c *Cargo[T]) run() {
 	for {
 		select {
-		case <-c.tickerCh:
+		case <-c.Ticker.C:
 			// TODO: Using context.Background() loses cancellation/deadline from Add() caller
 			// Should store context from Add() and use it here for proper propagation
 			go func() {
@@ -126,21 +124,17 @@ func (c *Cargo[T]) run() {
 // This prevents accepting already-cancelled work without complicating flush logic
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
-	// TODO: CRITICAL - Ticker leak! Every flush cycle creates a new ticker without stopping the old one.
-	// This causes goroutine and memory leaks. Need to either:
-	// 1. Stop old ticker before creating new one, OR
-	// 2. Create ticker once in NewCargo and reset it instead of recreating
-	// *** timer Reset in Add done
-	// Done
 	if len(c.batch) == 0 {
 		c.Ticker.Reset(c.interval)
 	}
 
 	c.batch = append(c.batch, item)
 
-	if len(c.batch) >= c.batchSize {
+	shouldFlush := len(c.batch) >= c.batchSize
+	c.mu.Unlock()
+
+	if shouldFlush {
 		select {
 		case c.flushCh <- struct{}{}:
 		default:
