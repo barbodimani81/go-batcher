@@ -15,12 +15,12 @@ type Cargo[T any] struct {
 	batch     []T
 	batchSize int
 
-	// ticker timeout
+	// ticker-interval
 	timeout  time.Duration
 	interval time.Duration
-	// context timeout
+	// context-timeout
 	handler handlerFunc[T]
-	ticker  *time.Ticker
+	Ticker  *time.Ticker
 
 	done      chan struct{}
 	flushCh   chan struct{}
@@ -28,25 +28,25 @@ type Cargo[T any] struct {
 	closeOnce sync.Once
 }
 
-func NewCargo[T any](size int, timeout time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
-	if err := configValidation(size, timeout, fn); err != nil {
+func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
+	if err := configValidation(size, interval, fn); err != nil {
 		return nil, err
 	}
 
 	c := &Cargo[T]{
 		batch:     make([]T, 0, size),
 		batchSize: size,
-		timeout:   timeout,
+		interval:  interval,
 		handler:   fn,
-		done:      make(chan struct{}),
+		done:      make(chan struct{}, 1),
 		flushCh:   make(chan struct{}, 1),
 		tickerCh:  nil,
 	}
-	go c.run()
+	go c.Run()
 	return c, nil
 }
 
-func (c *Cargo[T]) run() {
+func (c *Cargo[T]) Run() {
 	for {
 		select {
 		case <-c.tickerCh:
@@ -57,15 +57,20 @@ func (c *Cargo[T]) run() {
 		case <-c.flushCh:
 			err := c.flush(context.Background())
 			if err != nil {
-				log.Printf("cannot timeout flush: %v", err)
+				log.Printf("cannot interval flush: %v", err)
 			}
-			c.ticker.Reset(c.timeout)
+			c.Ticker.Reset(c.interval)
 		case <-c.done:
+			log.Println("done 222")
 			err := c.flush(context.Background())
+			log.Println("before here")
 			if err != nil {
 				log.Printf("cannot final flush: %v", err)
 			}
-			c.ticker.Stop()
+			log.Println("here")
+			if c.Ticker != nil {
+				c.Ticker.Stop()
+			}
 			return
 		}
 	}
@@ -77,15 +82,15 @@ func (c *Cargo[T]) Add(item T) error {
 	defer c.mu.Unlock()
 
 	if len(c.batch) == 0 {
-		c.ticker = time.NewTicker(c.timeout)
-		c.tickerCh = c.ticker.C
+		c.Ticker = time.NewTicker(c.interval)
+		c.tickerCh = c.Ticker.C
 	}
 
-	select {
-	case <-c.done:
-		return fmt.Errorf("cargo closed")
-	default:
-	}
+	//select {
+	//case <-c.done:
+	//	return fmt.Errorf("cargo closed")
+	//default:
+	//}
 
 	c.batch = append(c.batch, item)
 	if len(c.batch) >= c.batchSize {
@@ -93,17 +98,14 @@ func (c *Cargo[T]) Add(item T) error {
 		case c.flushCh <- struct{}{}:
 		default:
 		}
-
 	}
-
 	return nil
 }
 
 // flush is the internal flush with proper synchronization
 func (c *Cargo[T]) flush(ctx context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	flushCtx, cancel := context.WithTimeout(ctx, c.interval)
+	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	if len(c.batch) == 0 {
@@ -119,18 +121,21 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 }
 
 func (c *Cargo[T]) Close() error {
+	log.Println("cargo closinghhhh")
 	c.closeOnce.Do(func() {
-		close(c.done)
+		log.Println("cargo closed")
+		c.done <- struct{}{}
 	})
+	log.Println("cargo closed2")
 	return nil
 }
 
-func configValidation[T any](size int, timeout time.Duration, fn handlerFunc[T]) error {
+func configValidation[T any](size int, interval time.Duration, fn handlerFunc[T]) error {
 	if size <= 0 {
 		return fmt.Errorf("batch size must be greater than zero")
 	}
-	if timeout <= 0 {
-		return fmt.Errorf("timeout must be greater than zero")
+	if interval <= 0 {
+		return fmt.Errorf("interval must be greater than zero")
 	}
 	if fn == nil {
 		return fmt.Errorf("handler func cannot be empty")
