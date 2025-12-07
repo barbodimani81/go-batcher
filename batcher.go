@@ -19,8 +19,9 @@ type Cargo[T any] struct {
 	timeout  time.Duration
 	interval time.Duration
 	// context-timeout
-	handler handlerFunc[T]
-	Ticker  *time.Ticker
+	handler  handlerFunc[T]
+	ticker   *time.Ticker
+	tickerCh <-chan time.Time
 
 	done      chan struct{}
 	flushCh   chan struct{}
@@ -45,11 +46,12 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 		handler:   fn,
 		done:      make(chan struct{}),
 		flushCh:   make(chan struct{}, 1),
-		Ticker:    time.NewTicker(interval),
+		tickerCh:  nil,
+		ticker:    time.NewTicker(interval),
 		// TODO: Initialize timeout here: timeout: flushTimeout,
 		// Done
 	}
-	c.Ticker.Stop()
+	c.ticker.Stop()
 	// TODO: API Design Issue - Starting goroutine in constructor causes problems:
 	// 1. User has no control over when background work starts
 	// 2. Creates race condition if user calls Run() again (see demo/main.go:98)
@@ -71,7 +73,7 @@ func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx cont
 func (c *Cargo[T]) run() {
 	for {
 		select {
-		case <-c.Ticker.C:
+		case <-c.ticker.C:
 			// TODO: Using context.Background() loses cancellation/deadline from Add() caller
 			// Should store context from Add() and use it here for proper propagation
 			go func() {
@@ -80,7 +82,7 @@ func (c *Cargo[T]) run() {
 					log.Printf("cannot size based flush: %v", err)
 				}
 			}()
-			c.Ticker.Stop()
+			c.ticker.Stop()
 		case <-c.flushCh:
 			// TODO: Same issue - context.Background() ignores caller's context
 			go func() {
@@ -95,7 +97,7 @@ func (c *Cargo[T]) run() {
 			// Currently this keeps ticker running unnecessarily and wastes resources.
 			// *** ticker stop in all cases
 			// Done
-			c.Ticker.Stop()
+			c.ticker.Stop()
 		case <-c.done:
 			// TODO: Final flush also uses Background context - can't respect shutdown deadline
 			fmt.Println("done")
@@ -103,8 +105,8 @@ func (c *Cargo[T]) run() {
 			if err != nil {
 				log.Printf("cannot final flush: %v", err)
 			}
-			if c.Ticker != nil {
-				c.Ticker.Stop()
+			if c.ticker != nil {
+				c.ticker.Stop()
 			}
 			c.runWg.Done()
 			return
@@ -126,7 +128,7 @@ func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	c.mu.Lock()
 
 	if len(c.batch) == 0 {
-		c.Ticker.Reset(c.interval)
+		c.ticker.Reset(c.interval)
 	}
 
 	c.batch = append(c.batch, item)
