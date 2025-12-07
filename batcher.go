@@ -29,10 +29,10 @@ type Cargo[T any] struct {
 }
 
 func NewCargo[T any](size int, timeout, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
-// TODO: Add flushTimeout parameter to properly initialize c.timeout
-// Signature should be: NewCargo[T any](size int, interval time.Duration, flushTimeout time.Duration, fn ...) (*Cargo[T], error)
-// This gives flush operations their own independent timeout, separate from caller contexts
-func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Context, batch []T) error) (*Cargo[T], error) {
+	// TODO: Add flushTimeout parameter to properly initialize c.timeout
+	// Signature should be: NewCargo[T any](size int, interval time.Duration, flushTimeout time.Duration, fn ...) (*Cargo[T], error)
+	// This gives flush operations their own independent timeout, separate from caller contexts
+	// Done
 	if err := configValidation(size, interval, fn); err != nil {
 		return nil, err
 	}
@@ -48,6 +48,7 @@ func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Conte
 		tickerCh:  nil,
 		Ticker:    time.NewTicker(interval),
 		// TODO: Initialize timeout here: timeout: flushTimeout,
+		// Done
 	}
 	c.Ticker.Stop()
 	// TODO: API Design Issue - Starting goroutine in constructor causes problems:
@@ -64,7 +65,7 @@ func NewCargo[T any](size int, interval time.Duration, fn func(ctx context.Conte
 // TODO: This should be unexported (run) to prevent users from calling it multiple times
 // Currently if user calls Run() again, two goroutines compete for the same channels
 // causing race conditions and double-flush bugs
-// *** run unexported
+// Done
 func (c *Cargo[T]) run() {
 	for {
 		select {
@@ -87,6 +88,7 @@ func (c *Cargo[T]) run() {
 			// It will be restarted on next Add() when batch goes from empty to 1 item.
 			// Currently this keeps ticker running unnecessarily and wastes resources.
 			// *** ticker stop in all cases
+			// Done
 			c.Ticker.Stop()
 		case <-c.done:
 			log.Println("done 222")
@@ -113,13 +115,9 @@ func (c *Cargo[T]) run() {
 // 3. Passing trace IDs and request metadata for observability
 // Signature should be: Add(ctx context.Context, item T) error
 // Implementation (Option 4 - Check context at Add time only):
-//   select {
-//   case <-ctx.Done():
-//       return ctx.Err()
-//   default:
-//   }
+
 // This prevents accepting already-cancelled work without complicating flush logic
-func (c *Cargo[T]) Add(item T) error {
+func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -128,6 +126,7 @@ func (c *Cargo[T]) Add(item T) error {
 	// 1. Stop old ticker before creating new one, OR
 	// 2. Create ticker once in NewCargo and reset it instead of recreating
 	// *** timer Reset in Add done
+	// Done
 	if len(c.batch) == 0 {
 		c.Ticker.Reset(c.interval)
 	}
@@ -152,6 +151,8 @@ func (c *Cargo[T]) flush(ctx context.Context) error {
 	//      change this to: flushCtx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	//      Using Background() makes flush independent of caller contexts (Option 4)
 	// *** timeout added to newCargo
+	// Done
+
 	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
