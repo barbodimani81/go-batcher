@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// TODO: context handling in add
 // Define standard errors for the package
 var ErrBusy = fmt.Errorf("cargo buffer is full, system is busy")
 var ErrClosed = fmt.Errorf("cargo is closed")
@@ -18,19 +17,19 @@ type handlerFunc[T any] func(ctx context.Context, batch []T) error
 
 // --- Configuration and Options ---
 
-// Config holds the configuration state, used internally by the Options.
-type Config[T any] struct {
+// CargoConfig holds the configuration state, used internally by the Options.
+type CargoConfig[T any] struct {
 	maxRetries     int
 	failureHandler func(batch []T, err error)
 }
 
 // Option is the function signature for applying configuration changes.
-type Option[T any] func(*Config[T])
+type Option[T any] func(*CargoConfig[T])
 
 // WithMaxRetries configures the maximum number of attempts for a batch handler.
 // Default is 0 (no retries).
 func WithMaxRetries[T any](n int) Option[T] {
-	return func(cfg *Config[T]) {
+	return func(cfg *CargoConfig[T]) {
 		if n >= 0 {
 			cfg.maxRetries = n
 		}
@@ -40,7 +39,7 @@ func WithMaxRetries[T any](n int) Option[T] {
 // WithFailureHandler sets a custom callback for permanent data loss events.
 // By default, errors are logged via log.Printf.
 func WithFailureHandler[T any](fn func(batch []T, err error)) Option[T] {
-	return func(cfg *Config[T]) {
+	return func(cfg *CargoConfig[T]) {
 		cfg.failureHandler = fn
 	}
 }
@@ -59,7 +58,7 @@ type Cargo[T any] struct {
 
 	handler        handlerFunc[T]
 	failureHandler func(batch []T, err error)
-	ticker         *time.Ticker
+	timer          *time.Timer
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -85,7 +84,7 @@ func NewCargo[T any](
 	}
 
 	// 2. Initialize and apply optional configuration
-	cfg := Config[T]{
+	cfg := CargoConfig[T]{
 		maxRetries: 0, // Default
 	}
 	for _, opt := range opts {
@@ -114,10 +113,10 @@ func NewCargo[T any](
 		ctx:            rootCtx,
 		cancel:         cancel,
 		flushCh:        make(chan struct{}, 1),
-		ticker:         time.NewTicker(interval),
+		timer:          time.NewTimer(interval),
 		closed:         false,
 	}
-	c.ticker.Stop()
+	c.timer.Stop()
 	c.runWg.Add(1)
 	go c.run()
 	return c, nil
@@ -181,24 +180,20 @@ func (c *Cargo[T]) flushAndRetry(source string) {
 func (c *Cargo[T]) run() {
 	for {
 		select {
-		case <-c.ticker.C:
-			c.mu.Lock()
-			c.ticker.Stop()
-			c.mu.Unlock()
-
+		case <-c.timer.C:
 			c.flushAndRetry("interval")
 
 		case <-c.flushCh:
 			c.mu.Lock()
-			c.ticker.Stop()
+			c.timer.Stop()
 			c.mu.Unlock()
 
 			c.flushAndRetry("size-based")
 
 		case <-c.ctx.Done():
 			c.mu.Lock()
-			if c.ticker != nil {
-				c.ticker.Stop()
+			if c.timer != nil {
+				c.timer.Stop()
 			}
 			c.mu.Unlock()
 
@@ -216,7 +211,6 @@ func (c *Cargo[T]) run() {
 	}
 }
 
-// TODO: nil pointer add?
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	select {
 	case <-ctx.Done():
@@ -236,7 +230,7 @@ func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	}
 
 	if len(c.batch) == 0 {
-		c.ticker.Reset(c.interval)
+		c.timer.Reset(c.interval)
 	}
 
 	c.batch = append(c.batch, item)
