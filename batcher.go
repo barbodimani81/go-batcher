@@ -2,13 +2,13 @@ package cargo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 )
 
+// TODO: context handling in add
 // Define standard errors for the package
 var ErrBusy = fmt.Errorf("cargo buffer is full, system is busy")
 var ErrClosed = fmt.Errorf("cargo is closed")
@@ -18,19 +18,19 @@ type handlerFunc[T any] func(ctx context.Context, batch []T) error
 
 // --- Configuration and Options ---
 
-// CargoConfig holds the configuration state, used internally by the Options.
-type CargoConfig[T any] struct {
+// Config holds the configuration state, used internally by the Options.
+type Config[T any] struct {
 	maxRetries     int
 	failureHandler func(batch []T, err error)
 }
 
 // Option is the function signature for applying configuration changes.
-type Option[T any] func(*CargoConfig[T])
+type Option[T any] func(*Config[T])
 
 // WithMaxRetries configures the maximum number of attempts for a batch handler.
 // Default is 0 (no retries).
 func WithMaxRetries[T any](n int) Option[T] {
-	return func(cfg *CargoConfig[T]) {
+	return func(cfg *Config[T]) {
 		if n >= 0 {
 			cfg.maxRetries = n
 		}
@@ -40,7 +40,7 @@ func WithMaxRetries[T any](n int) Option[T] {
 // WithFailureHandler sets a custom callback for permanent data loss events.
 // By default, errors are logged via log.Printf.
 func WithFailureHandler[T any](fn func(batch []T, err error)) Option[T] {
-	return func(cfg *CargoConfig[T]) {
+	return func(cfg *Config[T]) {
 		cfg.failureHandler = fn
 	}
 }
@@ -85,7 +85,7 @@ func NewCargo[T any](
 	}
 
 	// 2. Initialize and apply optional configuration
-	cfg := CargoConfig[T]{
+	cfg := Config[T]{
 		maxRetries: 0, // Default
 	}
 	for _, opt := range opts {
@@ -203,8 +203,10 @@ func (c *Cargo[T]) run() {
 			c.mu.Unlock()
 
 			if batch, ok := c.getAndClearBatch(); ok {
-				err := c.processBatch(c.ctx, batch)
-				if err != nil && !errors.Is(err, context.Canceled) {
+				// Use Background context to ensure the final batch is processed
+				// even though the main context is canceled.
+				err := c.processBatch(context.Background(), batch)
+				if err != nil {
 					log.Printf("cannot final flush: %v", err)
 				}
 			}
@@ -214,6 +216,7 @@ func (c *Cargo[T]) run() {
 	}
 }
 
+// TODO: nil pointer add?
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	select {
 	case <-ctx.Done():
