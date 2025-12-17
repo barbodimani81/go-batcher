@@ -1,4 +1,4 @@
-package cargo
+package cargonew
 
 import (
 	"context"
@@ -8,16 +8,13 @@ import (
 	"time"
 )
 
-// Define standard errors for the package
-var ErrBusy = fmt.Errorf("cargo buffer is full, system is busy")
+var ErrFull = fmt.Errorf("cargo buffer is full, system is busy")
 var ErrClosed = fmt.Errorf("cargo is closed")
 
-// handlerFunc definition remains the same
+// cargo's handler
 type handlerFunc[T any] func(ctx context.Context, batch []T) error
 
-// --- Configuration and Options ---
-
-// CargoConfig holds the configuration state, used internally by the Options.
+// CargoConfig holds the Configurations for cargo
 type CargoConfig[T any] struct {
 	maxRetries     int
 	failureHandler func(batch []T, err error)
@@ -27,7 +24,6 @@ type CargoConfig[T any] struct {
 type Option[T any] func(*CargoConfig[T])
 
 // WithMaxRetries configures the maximum number of attempts for a batch handler.
-// Default is 0 (no retries).
 func WithMaxRetries[T any](n int) Option[T] {
 	return func(cfg *CargoConfig[T]) {
 		if n >= 0 {
@@ -36,16 +32,14 @@ func WithMaxRetries[T any](n int) Option[T] {
 	}
 }
 
-// WithFailureHandler sets a custom callback for permanent data loss events.
-// By default, errors are logged via log.Printf.
+// WithFailureHandler sets a custom/Users/barbod/Documents/Sazito/Beehive/beehive/pkg/cargonew/cargo.go callback for permanent data loss events.
 func WithFailureHandler[T any](fn func(batch []T, err error)) Option[T] {
 	return func(cfg *CargoConfig[T]) {
 		cfg.failureHandler = fn
 	}
 }
 
-// --- Cargo Structure and Implementation ---
-
+// Cargo batches data in-memory via an array using mutex
 type Cargo[T any] struct {
 	mu        sync.Mutex
 	batch     []T
@@ -67,8 +61,6 @@ type Cargo[T any] struct {
 	runWg     sync.WaitGroup
 }
 
-// NewCargo signature updated: Mandatory fields (size, time, handler) are positional,
-// and optional fields use the variadic options pattern.
 func NewCargo[T any](
 	ctx context.Context,
 	size int,
@@ -78,12 +70,10 @@ func NewCargo[T any](
 	opts ...Option[T],
 ) (*Cargo[T], error) {
 
-	// 1. Mandatory validation
 	if err := configValidation(size, timeout, interval, fn); err != nil {
 		return nil, err
 	}
 
-	// 2. Initialize and apply optional configuration
 	cfg := CargoConfig[T]{
 		maxRetries: 0, // Default
 	}
@@ -91,9 +81,10 @@ func NewCargo[T any](
 		opt(&cfg)
 	}
 
+	// TODO: context usage?
 	rootCtx, cancel := context.WithCancel(ctx)
 
-	// 3. Set a default permanent failure handler if none is provided
+	// Set a default permanent failure handler if none is provided
 	failureHandler := cfg.failureHandler
 	if failureHandler == nil {
 		failureHandler = func(batch []T, err error) {
@@ -101,7 +92,7 @@ func NewCargo[T any](
 		}
 	}
 
-	// 4. Create and initialize Cargo
+	// Create and initialize Cargo
 	c := &Cargo[T]{
 		batch:          make([]T, 0, size),
 		batchSize:      size,
@@ -122,9 +113,7 @@ func NewCargo[T any](
 	return c, nil
 }
 
-// Helper functions (getAndClearBatch, processBatch, flushAndRetry, run, Add, Close)
-// remain functionally the same, only using the fields set by the new NewCargo.
-
+// getAndClearBatch copies the batch and resets it
 func (c *Cargo[T]) getAndClearBatch() ([]T, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -138,6 +127,7 @@ func (c *Cargo[T]) getAndClearBatch() ([]T, bool) {
 	return b, true
 }
 
+// processBatch handles cargo's timeout
 func (c *Cargo[T]) processBatch(ctx context.Context, batch []T) error {
 	flushCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -211,6 +201,7 @@ func (c *Cargo[T]) run() {
 	}
 }
 
+// Add func adds to batch and calls flush based on batch size
 func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	select {
 	case <-ctx.Done():
@@ -226,7 +217,7 @@ func (c *Cargo[T]) Add(ctx context.Context, item T) error {
 	}
 
 	if len(c.batch) >= c.batchSize {
-		return ErrBusy
+		return ErrFull
 	}
 
 	if len(c.batch) == 0 {
